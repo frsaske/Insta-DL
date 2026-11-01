@@ -68,8 +68,20 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleRelease --no-daemon
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk "InstaDL-${GITHUB_SHA::7}.apk"
+      - name: Collect ABI APKs
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apk_files=(app/build/outputs/apk/release/*.apk)
+          if [ "${#apk_files[@]}" -eq 0 ]; then
+            echo "No release APKs were produced"
+            find app/build/outputs/apk -type f -maxdepth 3 -print
+            exit 1
+          fi
+          for apk in "${apk_files[@]}"; do
+            base=$(basename "$apk" .apk)
+            cp "$apk" "InstaDL-${GITHUB_SHA::7}-${base}.apk"
+          done
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -88,6 +100,6 @@ jobs:
           else
             tag="instadl-v1.0.${GITHUB_RUN_NUMBER}"
           fi
-          gh release create "$tag" "InstaDL-${GITHUB_SHA::7}.apk" \
+          gh release create "$tag" InstaDL-*.apk \
             --title "InstaDL $tag" \
             --generate-notes

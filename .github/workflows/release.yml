@@ -1,0 +1,96 @@
+name: Build & Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build InstaDL APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Set up Python 3.11 (for Chaquopy)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build Debug & Release APK
+        run: |
+          chmod +x ./gradlew || true
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug
+          else
+            gradle assembleDebug
+          fi
+
+      - name: Prepare APK Artifact
+        id: apk_step
+        run: |
+          mkdir -p build-artifacts
+          find app/build/outputs/apk/ -name "*.apk" -exec cp {} build-artifacts/ \;
+          # Rename to standard friendly release name
+          for f in build-artifacts/*.apk; do
+            [ -f "$f" ] || continue
+            filename=$(basename "$f")
+            echo "Found APK: $filename"
+            cp "$f" "build-artifacts/InstaDL-v1.0.0.apk"
+            break
+          done
+          echo "artifact_path=build-artifacts/InstaDL-v1.0.0.apk" >> $GITHUB_OUTPUT
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: InstaDL-APK
+          path: build-artifacts/*.apk
+          retention-days: 14
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build-artifacts/*.apk
+          name: "InstaDL ${{ github.ref_name }}"
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ### 🚀 InstaDL - Instagram Media & Reel Downloader
+            **Package:** `sasuke.instadl.app`
+            
+            #### ✨ Features:
+            - Pure Pitch-Black AMOLED Theme (YTDLnis Style)
+            - 1-Click Instagram Reels, Posts, and Carousels Downloader
+            - Background Download on Share (Share from Instagram directly)
+            - Chaquopy Python Engine (`yt-dlp` + direct JSON fallback)
+            - Gallery & System Media Scanner indexing
+            - 100% Free, Open-Source, and Ad-Free
+            
+            *Made with ❤️ by sasuke*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

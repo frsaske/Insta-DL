@@ -1,0 +1,6 @@
+{
+  "name": "InstaDL",
+  "description": "Ultra-clean AMOLED Instagram Media & Reel Downloader powered by Python scraper engine and native high-speed downloads.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

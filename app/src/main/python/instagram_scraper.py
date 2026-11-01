@@ -2,25 +2,28 @@
 Instagram Scraper Engine for InstaDL
 Extracts Instagram Reels, Posts, Carousels, and IGTV without login.
 Uses yt-dlp with resilient fallback to direct Instagram JSON / regex extraction.
+Zero external dependencies beyond yt-dlp (uses Python standard library urllib).
 """
 import re
 import json
 import urllib.parse
-try:
-    import requests
-except ImportError:
-    requests = None
+import urllib.request
+import ssl
 
 try:
     import yt_dlp
 except ImportError:
     yt_dlp = None
 
+# Create permissive SSL context for urllib
+_SSL_CTX = ssl.create_default_context()
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
+
 
 def sanitize_instagram_url(url: str) -> str:
     """Sanitize and normalize Instagram URL."""
     url = url.strip()
-    # Strip URL tracking query parameters
     parsed = urllib.parse.urlparse(url)
     clean_path = parsed.path
     if not clean_path.endswith('/'):
@@ -75,7 +78,6 @@ def fetch_via_ytdlp(url: str) -> dict:
                     "thumbnail": e_thumb
                 })
         else:
-            # Single item (video or image)
             direct_url = info.get('url') or ""
             is_vid = info.get('ext') == 'mp4' or info.get('vcodec') not in (None, 'none')
             media_type = "video" if is_vid else "image"
@@ -105,50 +107,42 @@ def fetch_via_direct_json(url: str) -> dict:
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-Mode': 'navigate',
     }
 
-    # Method A: Instagram oEmbed endpoint for basic metadata & author
     author = "instagram_creator"
     title = ""
     thumbnail = ""
     try:
-        if requests:
-            oembed_url = f"https://www.instagram.com/oembed/?url={urllib.parse.quote(clean_url)}"
-            resp = requests.get(oembed_url, headers=headers, timeout=8)
-            if resp.status_code == 200:
-                data = resp.json()
+        oembed_url = f"https://www.instagram.com/oembed/?url={urllib.parse.quote(clean_url)}"
+        req = urllib.request.Request(oembed_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8, context=_SSL_CTX) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode('utf-8'))
                 author = data.get("author_name") or author
                 title = data.get("title") or ""
                 thumbnail = data.get("thumbnail_url") or ""
     except Exception:
         pass
 
-    # Method B: Direct page fetch to extract og:video / og:image / script json
     media_items = []
     media_type = "video" if "/reel" in url or "/tv" in url else "image"
     
     try:
-        if requests:
-            resp = requests.get(clean_url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                html = resp.text
+        req = urllib.request.Request(clean_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as resp:
+            if resp.status == 200:
+                html = resp.read().decode('utf-8', errors='ignore')
                 
-                # Check for og:video
                 og_vid = re.search(r'<meta property="og:video" content="([^"]+)"', html)
                 if not og_vid:
                     og_vid = re.search(r'<meta property="og:video:secure_url" content="([^"]+)"', html)
                 
-                # Check for og:image
                 og_img = re.search(r'<meta property="og:image" content="([^"]+)"', html)
                 
-                # Check title
                 og_title = re.search(r'<meta property="og:title" content="([^"]+)"', html)
                 if og_title and not title:
                     title = og_title.group(1).replace("&amp;", "&").replace("&quot;", '"')
                 
-                # Check author from og:title
                 author_match = re.search(r'@([a-zA-Z0-9_\.]+)', title)
                 if author_match and author == "instagram_creator":
                     author = author_match.group(1)
@@ -178,7 +172,6 @@ def fetch_via_direct_json(url: str) -> dict:
         pass
 
     if not media_items:
-        # Fallback placeholder item so user can still see item card and interact
         media_items.append({
             "id": shortcode,
             "type": media_type,
@@ -198,27 +191,19 @@ def fetch_via_direct_json(url: str) -> dict:
 
 
 def fetch_instagram_media(url: str) -> str:
-    """
-    Main entry point invoked by Chaquopy or Python runner.
-    Returns a JSON formatted string of the media metadata.
-    """
     clean_url = sanitize_instagram_url(url)
     
-    # Attempt 1: yt-dlp
     try:
         data = fetch_via_ytdlp(clean_url)
         if data and data.get("media_items") and len(data["media_items"]) > 0:
             return json.dumps(data)
-    except Exception as e:
-        # print("yt-dlp fallback:", e)
+    except Exception:
         pass
 
-    # Attempt 2: Direct Instagram extraction
     try:
         data = fetch_via_direct_json(clean_url)
         return json.dumps(data)
-    except Exception as e:
-        # Minimum valid JSON on error
+    except Exception:
         shortcode = extract_shortcode(clean_url)
         return json.dumps({
             "id": shortcode,
